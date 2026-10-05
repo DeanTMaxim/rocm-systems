@@ -9,6 +9,23 @@ from typing import Optional
 from utils.logger import console_warning
 from utils.utils_common import METRIC_ID_RE, resolve_rocm_library_path
 
+# Deprecated options and what to do instead. A renamed option keeps its old
+# name as an extra option string until the old name is removed.
+DEPRECATED_OPTIONS = {
+    "--retain-rocpd-output": ".db files will be retained automatically.",
+}
+
+
+def warn_deprecated_options(argv: list[str], workload: list[str]) -> None:
+    """Warn about each deprecated option in argv, except in the trailing workload."""
+    for arg in argv[: len(argv) - len(workload)]:
+        option = arg.split("=", 1)[0]
+        if option in DEPRECATED_OPTIONS:
+            console_warning(
+                f"{option} is deprecated and will be removed in a future release. "
+                f"{DEPRECATED_OPTIONS[option]}"
+            )
+
 
 def validate_block(value: str) -> str:
     if METRIC_ID_RE.match(value):

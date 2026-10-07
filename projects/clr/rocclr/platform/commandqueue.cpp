@@ -204,9 +204,11 @@ void HostQueue::finish(bool cpu_wait) {
     command->enqueue();
   }
 
-  // Check HW status of the ROCclr event. Note: not all ROCclr modes support HW status
+  // Check HW status of the ROCclr event. Note: not all ROCclr modes support HW status. A marker
+  // with CPU wait has already completed its batch, itself included, when enqueue returns.
   static constexpr bool kWaitCompletion = true;
-  if (cpu_wait || !device().IsHwEventReady(command->event(), kWaitCompletion, GetSyncPolicy())) {
+  if (cpu_wait || ((command->status() != CL_COMPLETE) &&
+                   !device().IsHwEventReady(command->event(), kWaitCompletion, GetSyncPolicy()))) {
     ClPrint(LOG_DETAIL_DEBUG, LOG_CMD,
             "No HW event or batch size is less than %zu, "
             "await command completion",

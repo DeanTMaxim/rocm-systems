@@ -88,7 +88,7 @@ COMPRESSED_BUNDLE_MAGIC = b"CCOB"
 # hold either numbering, so that and any other version leaves the fat binaries
 # unscanned. tools/tests/test_skill_api_ids.py fails when HRR_VERSION moves
 # past this table.
-REGISTER_FAT_BINARY = {8: 549, 9: 550, 10: 550}
+REGISTER_FAT_BINARY = {8: 549, 9: 550, 10: 550, 11: 552}
 FAT_BINARY_HASH_OFFSET = EVENT_HEADER_BYTES + 8
 HARDWARE_ID_FIELDS = ("pci", "uuid", "luid")
 # Capture cannot zero what the GPU loads, so `verify` looks there for strings

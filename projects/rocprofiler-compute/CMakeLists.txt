@@ -666,6 +666,20 @@ add_test(
         ${COV_OPTION} tests/unit/utils/test_html_report.py ${WORKING_DIR_OPTION}
 )
 
+add_test(
+    NAME test_html_diagram
+    COMMAND
+        ${PYTHON_TEST_COMMAND} -m pytest --junitxml=tests/test_html_diagram.xml
+        ${COV_OPTION} tests/unit/memory_chart/test_html_diagram.py ${WORKING_DIR_OPTION}
+)
+
+add_test(
+    NAME test_mem_chart_html_report
+    COMMAND
+        ${PYTHON_TEST_COMMAND} -m pytest --junitxml=tests/test_mem_chart_html_report.xml
+        ${COV_OPTION} tests/unit/memory_chart/test_html_report.py ${WORKING_DIR_OPTION}
+)
+
 # -----------------------------------
 # Data imputation tests
 # -----------------------------------
@@ -1085,6 +1099,8 @@ if(${ENABLE_COVERAGE})
         test_roofline_main
         test_report_shell
         test_html_report
+        test_html_diagram
+        test_mem_chart_html_report
         test_rocpd_data
         test_profile_torch_trace
         test_inject_roctx_package

@@ -5379,7 +5379,10 @@ std::vector<ArithmeticCase> mullit_signaling_nan_cases() {
 }
 
 SimdPathExpectation simd_expectation_for_run(const ArithmeticCase &test, bool force_scalar) {
-  if (!util::has_stdx_simd || !test.simd.checked)
+  // Migrated RDNA handlers use rj-arith's dispatch, outside the legacy tracker.
+  // The library tests exercise each supported CPU backend directly.
+  if (test.arch == ROCJITSU_CODE_ARCH_RDNA3 || test.arch == ROCJITSU_CODE_ARCH_RDNA4 ||
+      !util::has_stdx_simd || !test.simd.checked)
     return {};
   return force_scalar ? expect_simd_fallback() : test.simd;
 }
@@ -5782,7 +5785,7 @@ INSTANTIATE_TEST_SUITE_P(MinMax, ValuRdna3OmodOverflowTest,
 
 class ValuMullitModeTest : public testing::TestWithParam<ArithmeticCase> {};
 
-// V_MULLIT_F32 has no SIMD path; both settings check that it stays scalar-correct.
+// Compatibility MULLIT shares rj-arith's exact MUL backend.
 TEST_P(ValuMullitModeTest, MatchesCapturesWithSimdEnabledAndForcedScalar) {
   ForceScalarGuard guard;
   for (const bool scalar : {true, false}) {
@@ -6071,7 +6074,9 @@ INSTANTIATE_TEST_SUITE_P(MinmaxOutputModifiers, ValuMinmaxFpModeTest,
 
 class ValuConversionTest : public testing::TestWithParam<ArithmeticCase> {};
 
-// With SIMD enabled, each case asserts the fast path it takes, or that it has none.
+// Run captured conversions with native CPU dispatch and forced scalar execution.
+// RDNA3/4 use rj-arith, whose backends are covered by its own CPU-level tests;
+// the legacy SIMD tracker only describes the remaining architectures' handlers.
 TEST_P(ValuConversionTest, MatchesCapturesWithSimdEnabledAndForcedScalar) {
   ForceScalarGuard guard;
   for (const bool scalar : {true, false}) {

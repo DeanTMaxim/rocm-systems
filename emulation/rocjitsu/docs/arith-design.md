@@ -146,7 +146,7 @@ other modes, such as rounding FP16 results before applying OMOD.
 Rocjitsu's [`arithmetic.semantics`](configuration.md#cpu-arithmetic-policy)
 setting maps directly to these modes and defaults to compatibility. Its string
 values are the lowercase constant names without `RJ_ARITH_SEMANTICS_`.
-Configuration stores the policy now; Rocjitsu handlers adopt it in the later integration step.
+
 
 
 

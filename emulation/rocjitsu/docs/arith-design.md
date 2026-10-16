@@ -143,7 +143,11 @@ Mode 7 is a temporary, instruction-specific policy outside the ordered modes.
 Each entry point selects the arithmetic and FP status policy matching Rocjitsu's
 previous behavior. This can retain instruction-specific details beyond the
 other modes, such as rounding FP16 results before applying OMOD.
-Rocjitsu's JSON policy setting is planned for the later integration step.
+Rocjitsu's [`arithmetic.semantics`](configuration.md#cpu-arithmetic-policy)
+setting maps directly to these modes and defaults to compatibility. Its string
+values are the lowercase constant names without `RJ_ARITH_SEMANTICS_`.
+Configuration stores the policy now; Rocjitsu handlers adopt it in the later integration step.
+
 
 
 ### Guest FP controls

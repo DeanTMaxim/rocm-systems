@@ -2,6 +2,17 @@
 
 Full documentation for HIP is available at [rocm.docs.amd.com](https://rocm.docs.amd.com/projects/HIP/en/latest/index.html)
 
+## Unreleased
+
+### Resolved issues
+
+* Resolved an issue on devices with a configurable LDS carveout where kernels with no carveout preference were dispatched with a 0% LDS hint. They now pass no preference, so the hardware decides. `hipFuncSetCacheConfig(hipFuncCachePreferNone)` also no longer overrides a device-level `hipDeviceSetCacheConfig` preference.
+* `hipDeviceGetCacheConfig` now returns the value set by `hipDeviceSetCacheConfig` on devices with a configurable LDS carveout, instead of always returning `hipFuncCachePreferNone`. Devices with a fixed carveout still report `hipFuncCachePreferNone`. `hipDeviceReset` restores the default.
+
+### Changed
+
+* After `hipFuncSetCacheConfig`, the kernel's `preferredShmemCarveout` attribute reads back `-1` for `hipFuncCachePreferNone` (was `0`) and `0` for `hipFuncCachePreferL1` (was `1`).
+
 ## HIP 7.17.0 for ROCm 10.2.0
 
 ### Added

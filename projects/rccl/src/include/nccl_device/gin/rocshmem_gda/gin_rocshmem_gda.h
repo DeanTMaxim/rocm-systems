@@ -21,6 +21,8 @@ NCCL_DEVICE_INLINE ncclGinRocshmemGdaGPUContext* gdaGpuCtx(ncclGinCtx ctx) {
 }
 }  // namespace detail
 
+// On ionic the completion check compares 24-bit sequence numbers, so Wait must poll before 2^23 more WQEs
+// complete on the queue pair past target, or it stops seeing the request finish.
 struct ncclGinRocshmemGdaRequest {
   uint64_t target;
   int peer;

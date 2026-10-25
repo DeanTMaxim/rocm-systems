@@ -13,6 +13,7 @@ from utils.metrics.evaluation_pipeline import eval_metric
 from utils.metrics.expression import build_eval_string, update_denominator_string
 from utils.metrics.pass_provenance import (
     METRIC_ROW_PASS_ATTR,
+    UNSET_EXPRESSION,
     PassLayout,
     bind_expression,
     bind_expression_dataframe,
@@ -596,7 +597,7 @@ def test_bind_leaves_metric_unset_when_counters_span_passes() -> None:
     used = bind_expression_dataframe(expression_df, layout, "MI300")
 
     assert used == set()
-    assert expression_df.at[0, "value"] == "None"
+    assert expression_df.at[0, "value"] == UNSET_EXPRESSION
     assert expression_df.attrs[METRIC_ROW_PASS_ATTR] == {}
 
     metric_df = pd.DataFrame({
@@ -610,7 +611,7 @@ def test_bind_leaves_metric_unset_when_counters_span_passes() -> None:
         frozenset({"Avg"}),
     )
     assert table_used == set()
-    assert metric_df.at[0, "Avg"] == ""
+    assert metric_df.at[0, "Avg"] == UNSET_EXPRESSION
 
 
 def test_eval_metric_uses_same_pass_for_duplicated_denominator() -> None:
@@ -857,4 +858,4 @@ def test_bind_expression_dataframe_unsets_a_metric_that_spans_passes() -> None:
 
     bind_expression_dataframe(expression_df, layout, "MI300")
 
-    assert expression_df.at[0, "value"] == "None"
+    assert expression_df.at[0, "value"] == UNSET_EXPRESSION

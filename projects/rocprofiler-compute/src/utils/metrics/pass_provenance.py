@@ -297,15 +297,13 @@ def select_pass_with_normalization_fallback(
     return select_pass(required, layout), False
 
 
-def _expression_should_unset(value: object) -> bool:
-    return isinstance(value, str) and bool(value) and value != _UNSET_EXPRESSION
-
-
 # Dividing by these counters across passes is not a same-pass result.
 # Relaxing them would read another pass's copy.
 _SAME_PASS_COUNTERS = frozenset({"SQ_WAVES", "GRBM_GUI_ACTIVE"})
 
-_UNSET_EXPRESSION = "None"
+# Both binders write this into a metric that fits no single pass, and both
+# evaluators leave such a cell unset.
+UNSET_EXPRESSION = ""
 
 
 def choose_metric_pass(
@@ -498,7 +496,7 @@ def _clear_pass_expressions(
             continue
         value = df.at[row_id, field]
         if isinstance(value, str) and value and _reads_pass_data(value):
-            df.at[row_id, field] = ""
+            df.at[row_id, field] = UNSET_EXPRESSION
 
 
 def bind_expression_dataframe(
@@ -548,7 +546,7 @@ def bind_expression_dataframe(
                 for row_index in group.index:
                     value = expression_df.at[row_index, "value"]
                     if isinstance(value, str) and _reads_pass_data(value):
-                        expression_df.at[row_index, "value"] = "None"
+                        expression_df.at[row_index, "value"] = UNSET_EXPRESSION
             continue
         used_passes.add(chosen)
         metric_pass[metric_id] = chosen

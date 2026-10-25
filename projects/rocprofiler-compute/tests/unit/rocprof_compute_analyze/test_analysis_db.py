@@ -25,6 +25,7 @@ from pc_sampling.code_object_analysis import CodeObjectInstruction, CodeObjectSy
 from pc_sampling.pc_sampling_analysis import SOURCE_LINE_MISSING, InstructionLineRecord
 from rocprof_compute_analyze.analysis_db import (
     SourceFrameCollector,
+    _roofline_point_values,
     _visible_metric_rows,
     db_analysis,
     filter_dispatch_frame,
@@ -37,7 +38,7 @@ from utils.metrics.noise_clamper import (
     clear_noise_clamp_warnings,
     get_noise_clamp_warnings,
 )
-from utils.metrics.pass_provenance import UNSET_EXPRESSION
+from utils.metrics.pass_provenance import UNSET_EXPRESSION, PassLayout
 
 ISA_WORKLOAD_NAME = "vector_copy"
 ISA_WORKLOAD_SUB_NAME = "run"
@@ -783,6 +784,62 @@ def test_calc_dataframe_expressions_leaves_an_unbound_metric_unset():
 
     assert pd.isna(result.iloc[0])
     record_failed.assert_not_called()
+
+
+def test_roofline_points_read_each_metric_from_one_pass():
+    """A roofline point is bound to one pass; an unfilled composite stays unset."""
+    layout = PassLayout(
+        pass_keys=("pmc_perf_0", "pmc_perf_1"),
+        counters_by_pass={
+            "pmc_perf_0": frozenset({"TD_BUSY", "GRBM_GUI_ACTIVE"}),
+            "pmc_perf_1": frozenset({"TA_BUSY", "GRBM_GUI_ACTIVE"}),
+        },
+        duplicated=frozenset({"GRBM_GUI_ACTIVE"}),
+    )
+    pmc_df = pd.DataFrame({
+        "TA_BUSY": [50.0],
+        "TD_BUSY": [30.0],
+        "GRBM_GUI_ACTIVE": [100.0],
+        "GRBM_GUI_ACTIVE@pass:pmc_perf_0": [100.0],
+        "GRBM_GUI_ACTIVE@pass:pmc_perf_1": [200.0],
+    })
+    roofline_df = pd.DataFrame(
+        {
+            "Metric": ["AI L1", "AI L2", "AI LDS"],
+            "Value": [
+                "to_avg(raw_pmc_df['TA_BUSY'] / raw_pmc_df['GRBM_GUI_ACTIVE'])",
+                "COLLECT_RATIO(_collect.a, _collect.b)",
+                "to_avg(raw_pmc_df['TA_BUSY'] / raw_pmc_df['TD_BUSY'])",
+            ],
+        },
+        index=["4.0.0", "4.0.1", "4.0.2"],
+    )
+    roofline_df.attrs["collect_ratio_specs"] = {
+        "4.0.1": {"numerator": ["_collect.a"], "denominator": ["_collect.b"]},
+    }
+    names = {"l1_cache_data": "AI L1", "l2_cache_data": "AI L2", "lds": "AI LDS"}
+    expressions = dict(zip(roofline_df["Metric"], roofline_df["Value"]))
+
+    with patch(
+        "rocprof_compute_analyze.analysis_db.mi_gpu_specs.get_gpu_series",
+        return_value="MI300",
+    ), patch(
+        "rocprof_compute_analyze.analysis_db.get_build_in_vars", return_value={}
+    ), patch("utils.metrics.pass_provenance.get_build_in_vars", return_value={}):
+        points = _roofline_point_values(
+            roofline_df,
+            names,
+            expressions,
+            {("4.0.1", "Value"): "N/A"},
+            pmc_df,
+            {"gpu_arch": "gfx942", "num_xcd": 1},
+            layout,
+        )
+
+    # TA_BUSY is on pmc_perf_1, so GRBM_GUI_ACTIVE comes from that pass too.
+    assert points["l1_cache_data"] == pytest.approx(50.0 / 200.0)
+    assert "l2_cache_data" not in points
+    assert pd.isna(points["lds"])
 
 
 def test_calc_dataframe_expressions_empty_returns_assignable_series():
@@ -3785,8 +3842,11 @@ def test_calc_roofline_data_includes_all_kernels(monkeypatch):
     analyzer = make_roofline_calc_analyzer(workload_path, pmc_df, roofline_df)
     evaluated_row_counts = []
 
-    def evaluate_roofline_metric(name, value, kernel_pmc_df, sys_info):
-        evaluated_row_counts.append(len(kernel_pmc_df))
+    def evaluate_roofline_metric(
+        name, value, kernel_pmc_df, sys_info, parse=False, **_kwargs
+    ):
+        if not parse:
+            evaluated_row_counts.append(len(kernel_pmc_df))
         return 42.0
 
     monkeypatch.setattr(

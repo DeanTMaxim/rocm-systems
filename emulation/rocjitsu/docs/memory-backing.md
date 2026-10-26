@@ -38,9 +38,40 @@ attachment disappears, even after `IPC_RMID`. The per-segment size limit
 `kernel.shmmax` can also reject an allocation even when IDs and aggregate
 capacity remain available.
 
+Partial token mappings temporarily attach the entire segment with `shmat`
+before retaining the requested range with `mremap`. They therefore need
+contiguous virtual address space for the full segment, plus the new view,
+and can fail with `ENOMEM` under `RLIMIT_AS` even when the requested view
+is only one page. This is virtual address space, not eager physical allocation.
+A fence-only BO retains one fence page after mapping; only native memfd backing
+can create that page view without the temporary full-segment requirement.
+A failed fence mapping rejects submission and can be retried after sufficient
+address space becomes available.
+
 Socket tokens support these mapping/metadata adapters, not file-offset I/O.
 The PCI model's `VramStore` still uses its own memfd with `pread`/`pwrite` and
 is outside this KFD backing support for file limits.
+
+## Public VM handles
+
+Embedders that load `librocjitsu.so` with `dlopen(RTLD_LOCAL)` must map handles
+from `rj_vm_get_shared_mem{,_as}` and `rj_vm_cmd_t::shared_handle` with the
+public `rj_vm_map_shared_mem` C API. These handles are borrowed from the VM;
+they may be memfds or opaque tokens, and ordinary libc `mmap` cannot map tokens.
+The same API accepts descriptors duplicated or received through `SCM_RIGHTS`.
+Keep the library loaded and the descriptor valid during the call.
+
+Pass a `rj_vm_map_t` with `MAP_SHARED`, the desired protection, and a
+page-aligned byte offset within the backing (not the KFD mmap offset used for
+handle lookup). A successful call returns `ROCJITSU_STATUS_SUCCESS` and fills
+`mapped_addr`; a failed mapping returns `ROCJITSU_STATUS_ERROR`, sets
+`mapped_addr` to `MAP_FAILED`, and captures the error in `map_errno`.
+The keeper-lifetime, IPC-namespace, and credential constraints above also apply.
+The caller owns the resulting view and releases it with host `munmap`.
+Mapped views outlive handles, but the caller must stop simulator access before
+unmapping or changing their protections.
+
+## Keeper lifecycle
 
 The helper execs with an independent address space, detaches from application
 job control, and watches its owner's pidfd and a close-on-exec file lease.

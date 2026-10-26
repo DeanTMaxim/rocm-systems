@@ -2703,8 +2703,8 @@ public:
           if (gem.cpu_ptr) {
             fence_address = static_cast<uint8_t *>(gem.cpu_ptr) + user_fence->offset;
           } else {
-            // A fence-only BO needs one page, not a full CPU view of the BO.
-            // The lease retains the view through GEM_CLOSE and rejected enqueue.
+            // Retain only the fence page through GEM_CLOSE and rejected enqueue.
+            // Token backing still needs a temporary full-BO shmat attachment.
             const size_t page = sysconf(_SC_PAGESIZE);
             const uint64_t offset = user_fence->offset / page * page;
             auto mapping_lock = rocjitsu::host_mapping_lock().lock_exclusive();
@@ -4786,10 +4786,9 @@ RJ_INTERPOSER_EXPORT int rj_ioctl(int fd, unsigned long request, ...) {
         return -1;
       }
 
-      // Only a dma-buf can be imported. It is a regular file to fstat; a device node,
-      // pipe or socket is not, and neither is a descriptor the interposer serves
-      // itself. Retaining one as an export would misclassify it once its descriptor
-      // number is reused.
+      // The backing adapter recognizes native files and opaque tokens as regular
+      // storage. Reject other sockets, pipes, device nodes, and descriptors the
+      // interposer serves itself so fd reuse cannot misclassify them as exports.
       struct stat kind {};
       if (InterposerContext::ctx.is_interposer_fd(prime->fd) ||
           rocjitsu::stat_memory_backing(prime->fd, &kind) != 0 || !S_ISREG(kind.st_mode)) {
@@ -4798,8 +4797,8 @@ RJ_INTERPOSER_EXPORT int rj_ioctl(int fd, unsigned long request, ...) {
       }
 
       // Size the BO so GEM_VA can map the dmabuf into the GPU page table. The dmabuf
-      // fd is mmap-able (it dups the allocation's backing memfd). Use the real fstat
-      // (not the interposed one) so we don't re-enter our own hook.
+      // fd aliases the allocation's backing, which may be a socket token. Use
+      // the backing metadata adapter to handle both forms without hook re-entry.
       uint64_t sz = 0;
       struct stat st {};
       if (rocjitsu::stat_memory_backing(prime->fd, &st) == 0 && st.st_size > 0) {

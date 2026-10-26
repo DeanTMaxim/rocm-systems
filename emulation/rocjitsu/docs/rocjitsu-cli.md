@@ -208,7 +208,7 @@ a shutdown `eventfd` between daemon timeout=0 polls, avoiding mutex starvation.
 ## Memory Sharing (Same-VA Architecture)
 
 Both client and daemon map shared backing at the **same virtual address** using
-`memory_backing::map` with `MAP_FIXED`. GPU VAs are in the GPUVM aperture (`0x1000000000` - `0x3FFFFFFFFFFF`),
+`map_memory_backing` with `MAP_FIXED`. GPU VAs are in the GPUVM aperture (`0x1000000000` - `0x3FFFFFFFFFFF`),
 which doesn't collide with either process's normal address space.
 
 This means `reinterpret_cast<void*>(gpu_va)` works in both processes ---
@@ -225,7 +225,7 @@ Client                                     Daemon
 
 2. ROCR: hsaKmtAllocMemory()
    RemoteDriver::send_ioctl(ALLOC)  ---->  alloc_memory_ioctl()
-                                            memory_backing::create via rocjitsu-memory
+                                            create_memory_backing via rocjitsu-memory
                                             MAP_FIXED backing at VA (proactive)
                                     <----  response + backing fd (SCM_RIGHTS)
    [store fd until free or driver cleanup]
@@ -327,7 +327,7 @@ waiters simultaneously.
 
 ### Fd Reservation (DMTCP Pattern)
 
-The driver reserves a contiguous fd range (4000-4255) for internal memfds.
+The driver reserves a contiguous fd range (4000-4255) for internal backing descriptors.
 `claim_fd(real_fd)` moves a real fd into this range via `dup2`. The
 interposer's `close()` checks `owns_reserved_fd(fd)` to protect internal
 fds from ROCR's normal fd lifecycle.
@@ -336,9 +336,9 @@ fds from ROCR's normal fd lifecycle.
 
 ROCR opens and closes many fds during init (topology files, /proc, DRM
 render nodes). Without protection, a transient file's fd number could
-collide with an allocation memfd. The `owned_fds_` set in `SimulatedDriver`
-tracks all internal memfds, and the interposer suppresses close() on
-protected fds.
+collide with an allocation backing descriptor. The `owned_fds_` set in
+`SimulatedKfd` tracks internal backing descriptors, including socket tokens,
+and the interposer suppresses close() on protected fds.
 
 ## Limitations
 

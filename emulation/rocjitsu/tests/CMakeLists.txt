@@ -1901,6 +1901,41 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
             register_observer_abi_test $<TARGET_FILE:rocjitsu_shared>
             $<TARGET_FILE:register_observer_probe>
     )
+
+    # Resolve only public C symbols through RTLD_LOCAL. Linking simulator
+    # objects here would hide whether an ordinary embedder can map its handles.
+    add_executable(vm_shared_memory_api_test vm_shared_memory_api_test.cpp)
+    target_link_libraries(
+        vm_shared_memory_api_test
+        PRIVATE GTest::gtest_main ${CMAKE_DL_LIBS}
+    )
+    rj_configure_target(vm_shared_memory_api_test TEST)
+    target_compile_definitions(
+        vm_shared_memory_api_test
+        PRIVATE
+            RJ_VM_API_LIBRARY="$<TARGET_FILE:rocjitsu_shared>"
+            RJ_VM_API_CONFIG="${CMAKE_CURRENT_SOURCE_DIR}/race-detector/race_test_config.json"
+    )
+    add_dependencies(vm_shared_memory_api_test rocjitsu_shared rocjitsu_memory)
+    foreach(_backing IN ITEMS native zero-hard-limit)
+        foreach(_process IN ITEMS default explicit)
+            set(_mapping_env)
+            if(_backing STREQUAL "zero-hard-limit")
+                list(APPEND _mapping_env RJ_TEST_HARD_ZERO=1)
+            endif()
+            if(_process STREQUAL "explicit")
+                list(APPEND _mapping_env RJ_TEST_EXPLICIT_PROCESS=1)
+            endif()
+            add_test(
+                NAME VmSharedMemoryApi.${_backing}.${_process}
+                COMMAND
+                    ${CMAKE_COMMAND} -E env --unset=LD_PRELOAD
+                    --unset=RJ_TEST_FORCE_TOKEN_BACKING
+                    --unset=RJ_TEST_HARD_ZERO --unset=RJ_TEST_EXPLICIT_PROCESS
+                    ${_mapping_env} $<TARGET_FILE:vm_shared_memory_api_test>
+            )
+        endforeach()
+    endforeach()
 endif()
 
 add_library(early_mmap_preload SHARED early_mmap_preload_test.cpp)
@@ -2185,8 +2220,14 @@ foreach(_config IN ITEMS gfx1100_w7900 gfx1201_r9700)
         )
     endforeach()
     rj_add_interposer_test_suite(
-        InterposerPm4FileLimitTest LargeFenceOnlyBufferNeedsOnePage
+        InterposerPm4FileLimitTest NativeLargeFenceOnlyBufferNeedsOnePage
         CONFIG "${CMAKE_SOURCE_DIR}/configs/${_config}.json"
+    )
+    rj_add_interposer_test_suite(
+        InterposerPm4FileLimitTest
+        TokenLargeFenceOnlyBufferNeedsTemporaryAttachment
+        CONFIG "${CMAKE_SOURCE_DIR}/configs/${_config}.json"
+        SUFFIX ".fallback" PREFIX prlimit --fsize=4096:4096
     )
 endforeach()
 

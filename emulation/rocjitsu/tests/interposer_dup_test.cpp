@@ -3829,6 +3829,7 @@ protected:
     // File-limit checks do not need the private descriptor replacement probe.
     initialize(false);
   }
+  void check_large_fence_mapping(bool token);
 };
 
 TEST_F(InterposerPm4FileLimitTest, CompletionSurvivesClosedHandleAndFileLimit) {
@@ -3869,7 +3870,7 @@ TEST_F(InterposerPm4FileLimitTest, CompletionSurvivesClosedHandleAndFileLimit) {
   EXPECT_EQ(after.rlim_max, limit.rlim_max);
 }
 
-TEST_F(InterposerPm4FileLimitTest, LargeFenceOnlyBufferNeedsOnePage) {
+void InterposerPm4FileLimitTest::check_large_fence_mapping(bool token) {
   memory_[0] = 0xffff1000;
   drm_amdgpu_gem_create create{};
   create.in.bo_size = uint64_t{1} << 30;
@@ -3897,7 +3898,15 @@ TEST_F(InterposerPm4FileLimitTest, LargeFenceOnlyBufferNeedsOnePage) {
   const int result = submit(1, true, &sequence, AMDGPU_HW_IP_COMPUTE, 0, handle);
   const int error = errno;
   ASSERT_EQ(setrlimit(RLIMIT_AS, &original), 0);
-  ASSERT_EQ(result, 0) << strerror(error);
+  if (token) {
+    // shmat needs room for the entire segment before the adapter can retain
+    // just the fence page. Failed submission must remain safe to retry.
+    ASSERT_EQ(result, -1);
+    ASSERT_EQ(error, ENOMEM);
+    ASSERT_EQ(submit(1, true, &sequence, AMDGPU_HW_IP_COMPUTE, 0, handle), 0);
+  } else {
+    ASSERT_EQ(result, 0) << strerror(error);
+  }
   ASSERT_EQ(gem_close(drm_, handle), 0);
   drm_syncobj_array signal{};
   signal.handles = reinterpret_cast<uint64_t>(&input_);
@@ -3908,6 +3917,14 @@ TEST_F(InterposerPm4FileLimitTest, LargeFenceOnlyBufferNeedsOnePage) {
   std::memcpy(&observed, view + 8, sizeof(observed));
   EXPECT_EQ(observed, sequence);
   EXPECT_EQ(munmap(view, 4096), 0);
+}
+
+TEST_F(InterposerPm4FileLimitTest, NativeLargeFenceOnlyBufferNeedsOnePage) {
+  check_large_fence_mapping(false);
+}
+
+TEST_F(InterposerPm4FileLimitTest, TokenLargeFenceOnlyBufferNeedsTemporaryAttachment) {
+  check_large_fence_mapping(true);
 }
 
 TEST(InterposerGemTest, LowAddressMappingHonorsMap32Bit) {

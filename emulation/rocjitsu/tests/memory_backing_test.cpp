@@ -646,12 +646,39 @@ TEST_F(MemoryBackingDeathTest, SubreaperWarnsAboutChildWaitsAndRecoversAfterFail
       ::testing::ExitedWithCode(0), "");
 }
 
+int write_namespace_map(const char *path, const std::string &contents) {
+  const int fd = open(path, O_WRONLY | O_CLOEXEC);
+  if (fd < 0)
+    return errno;
+  const ssize_t written = write(fd, contents.data(), contents.size());
+  const int error = written < 0                                        ? errno
+                    : written == static_cast<ssize_t>(contents.size()) ? 0
+                                                                       : EIO;
+  close(fd);
+  return error;
+}
+
 TEST(MemoryBackingNamespaceTest, NamespaceInitWarnsAndReapsKeepers) {
   const pid_t child = fork();
   ASSERT_GE(child, 0);
   if (child == 0) {
-    if (unshare(CLONE_NEWPID) != 0)
-      _exit(errno == EPERM || errno == EINVAL ? 77 : 1);
+    if (unshare(CLONE_NEWPID) != 0) {
+      if (errno != EPERM && errno != EINVAL)
+        _exit(1);
+      const uid_t uid = geteuid();
+      const gid_t gid = getegid();
+      if (unshare(CLONE_NEWUSER | CLONE_NEWPID) != 0)
+        _exit(errno == EPERM || errno == EINVAL || errno == ENOSPC ? 77 : 1);
+      // Map the caller to namespace root, as unshare -Ur does, so the keeper
+      // retains a valid owning UID/GID for its shared-memory segments.
+      int error = write_namespace_map("/proc/self/uid_map", "0 " + std::to_string(uid) + " 1\n");
+      if (!error)
+        error = write_namespace_map("/proc/self/setgroups", "deny\n");
+      if (!error)
+        error = write_namespace_map("/proc/self/gid_map", "0 " + std::to_string(gid) + " 1\n");
+      if (error)
+        _exit(error == EPERM || error == EACCES ? 77 : 1);
+    }
     const pid_t init = fork();
     if (init == 0) {
       check_subreaper_warning();
@@ -665,7 +692,7 @@ TEST(MemoryBackingNamespaceTest, NamespaceInitWarnsAndReapsKeepers) {
   ASSERT_EQ(waitpid(child, &status, 0), child);
   ASSERT_TRUE(WIFEXITED(status));
   if (WEXITSTATUS(status) == 77)
-    GTEST_SKIP() << "Creating a PID namespace requires namespace privileges";
+    GTEST_SKIP() << "Neither privileged nor user-namespace PID isolation is available";
   EXPECT_EQ(WEXITSTATUS(status), 0);
 }
 

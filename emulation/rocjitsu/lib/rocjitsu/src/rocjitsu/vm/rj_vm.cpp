@@ -5,6 +5,8 @@
 
 #include "embedded_schema.h"
 #include "rocjitsu/config/checkpoint.h"
+#include "rocjitsu/kmd/linux/host_mapping_lock.h"
+#include "rocjitsu/kmd/linux/memory_backing.h"
 #include "rocjitsu/kmd/linux/simulated_kfd.h"
 #include "rocjitsu/vm/amdgpu/partitioning.h"
 #include "rocjitsu/vm/plugins/plugin_loader.h"
@@ -630,4 +632,17 @@ rj_status_t rj_vm_get_shared_mem_as(rj_vm_t *vm, uint32_t process_id, int64_t of
     return ROCJITSU_STATUS_INVALID_ARGUMENT;
   *handle = vm->vm->driver()->get_mmap_backing(process_id, static_cast<off_t>(offset));
   return ROCJITSU_STATUS_SUCCESS;
+}
+
+rj_status_t rj_vm_map_shared_mem(rj_handle_t handle, rj_vm_map_t *map) {
+  if (!map)
+    return ROCJITSU_STATUS_INVALID_ARGUMENT;
+  const auto mapping_lock = host_mapping_lock().lock_exclusive();
+  void *result =
+      map_memory_backing(reinterpret_cast<void *>(map->addr), static_cast<size_t>(map->length),
+                         static_cast<int>(map->prot), static_cast<int>(map->flags), handle,
+                         static_cast<off_t>(map->offset));
+  map->map_errno = result == MAP_FAILED ? errno : 0;
+  map->mapped_addr = reinterpret_cast<uint64_t>(result);
+  return result == MAP_FAILED ? ROCJITSU_STATUS_ERROR : ROCJITSU_STATUS_SUCCESS;
 }

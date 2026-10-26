@@ -20,6 +20,9 @@
 
 namespace rocjitsu {
 
+// Fixed descriptor slots shared by exec_keeper and the rocjitsu-memory entry
+// point across exec. Cleanup and descriptor duplication start at
+// kMemoryKeeperFirstUnreservedFd to preserve these channels.
 inline constexpr int kMemoryKeeperListenerFd = 3;
 inline constexpr int kMemoryKeeperLeaseFd = 4;
 inline constexpr int kMemoryKeeperStartupFd = 5;

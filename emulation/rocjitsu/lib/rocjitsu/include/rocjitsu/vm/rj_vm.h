@@ -46,13 +46,16 @@ typedef enum rj_vm_mode_t {
   /// a host runtime (e.g., ROCR) can issue ioctls through the interposer.
   RJ_VM_MODE_LOCAL = 1,
   /// @brief Multi-process serving (daemon). Same as LOCAL, plus all GPU
-  /// allocations are backed by memfds for cross-process sharing via
-  /// SCM_RIGHTS. Used by the rocjitsu CLI in daemon mode to host the
+  /// allocations have shareable backing handles (memfds or opaque tokens)
+  /// transferable via SCM_RIGHTS. Map them with rj_vm_map_shared_mem.
+  /// Used by the rocjitsu CLI in daemon mode to host the
   /// simulator on behalf of remote client processes.
   RJ_VM_MODE_DAEMON = 2,
 } rj_vm_mode_t;
 
 /// @brief Device command descriptor for rj_vm_execute.
+/// @details Map shared_handle with rj_vm_map_shared_mem; it may be an opaque
+/// token rather than a memfd. The VM owns the handle; the caller must not close it.
 typedef struct rj_vm_cmd_t {
   uint32_t cmd;               ///< Platform-specific command number.
   void *buf;                  ///< Command arguments buffer (with inlined arrays).
@@ -358,12 +361,34 @@ RJ_API_EXPORT rj_status_t rj_vm_gpu_info_at(rj_vm_t *vm, uint32_t ordinal, rj_vm
 
 /// @brief Get the borrowed backing memory handle (local mode).
 /// @details The VM retains ownership; the caller must not close the handle.
+/// The handle may be an opaque token; use rj_vm_map_shared_mem rather than
+/// assuming it supports host mmap or file I/O. Returns -1 when no backing exists.
 RJ_API_EXPORT rj_status_t rj_vm_get_shared_mem(rj_vm_t *vm, int64_t offset, rj_handle_t *handle);
 
 /// @brief Get the borrowed backing memory handle for a specific process (daemon mode).
 /// @details The VM retains ownership; the caller must not close the handle.
+/// Mapping and lifetime rules are the same as for rj_vm_get_shared_mem.
 RJ_API_EXPORT rj_status_t rj_vm_get_shared_mem_as(rj_vm_t *vm, uint32_t process_id, int64_t offset,
                                                   rj_handle_t *handle);
+
+/// @brief Map a shared backing handle into the calling process without preloading.
+/// @details Accepts handles from rj_vm_get_shared_mem{,_as}, rj_vm_cmd_t::shared_handle,
+/// or their dup/SCM_RIGHTS aliases. The handle is borrowed and is not closed.
+/// map->offset is a byte offset within the backing, not a KFD mmap offset.
+/// Use MAP_SHARED, a page-aligned offset, and a range within the allocation.
+/// Opaque tokens do not support MAP_PRIVATE or file I/O. Token mappings require
+/// a live creating keeper, the same IPC namespace, and current System V IPC
+/// permissions; failures report ESTALE, EXDEV, or EACCES respectively.
+/// On success the caller owns the view and may use host munmap/mprotect.
+/// Views outlive handles, but the caller must stop simulator access before
+/// unmapping or changing protections. Keep librocjitsu loaded while using this API.
+/// @param[in] handle Backing descriptor, valid for the duration of this call.
+/// @param[in,out] map Host mapping parameters and result.
+/// @retval ROCJITSU_STATUS_SUCCESS Mapping succeeded; map_errno is zero.
+/// @retval ROCJITSU_STATUS_ERROR Mapping failed; mapped_addr is MAP_FAILED and
+/// map_errno contains the host error.
+/// @retval ROCJITSU_STATUS_INVALID_ARGUMENT map is NULL.
+RJ_API_EXPORT rj_status_t rj_vm_map_shared_mem(rj_handle_t handle, rj_vm_map_t *map);
 
 /// @brief Request the simulation engine to stop.
 ///

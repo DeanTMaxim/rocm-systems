@@ -35,9 +35,10 @@ Collecting it runs microbenchmarks in addition to profiling the application,
 which takes extra time. `--no-roof` skips them when the user only wants
 counters.
 
-When [supported hardware](../../docs/what-is-rocprof-compute.rst) shows no
-roofline support, do not ask the user to re-profile without `--no-roof`.
-Use Speed-of-Light and the `rocprof-compute-memory` skill instead.
+On MI100 (gfx908), the roofline microbenchmarks are skipped and the profile
+still succeeds. When [supported hardware](../../docs/what-is-rocprof-compute.rst)
+shows no roofline support, do not ask the user to re-profile without
+`--no-roof`. Use Speed-of-Light and the `rocprof-compute-memory` skill instead.
 
 `--device` and `HIP_VISIBLE_DEVICES` are different selections. See
 [Selecting a GPU](../../docs/how-to/profile/mode.rst).

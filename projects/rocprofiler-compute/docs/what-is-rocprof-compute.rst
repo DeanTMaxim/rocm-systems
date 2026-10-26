@@ -261,10 +261,10 @@ Roofline micro-benchmark support varies by :ref:`SoC family <def-soc>` independe
      - ✅
      - ✅
      - Full feature support.
-   * - AMD Instinct MI100 Series (CDNA1, gfx908)
+   * - AMD Instinct MI100 Series (CDNA1)
      - ✅
      - ❌
-     - Roofline micro-benchmarks require MI200 or later. On this GPU they are skipped and the profile still succeeds. See :ref:`standalone-roofline`.
+     - Roofline micro-benchmarks require MI200 or later. See :ref:`standalone-roofline`.
    * - AMD Ryzen™ AI Max / Ryzen AI Max+ 300 and 400 Series and Ryzen AI 5/7 PRO 4xx Series (Strix/Halo, Gorgon/Halo; gfx1150/gfx1151/gfx1152/gfx1153)
      - ✅
      - ✅

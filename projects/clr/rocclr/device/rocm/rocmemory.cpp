@@ -1197,7 +1197,8 @@ bool Buffer::create(bool alloc_local) {
 
 // Recompute the owning agent from a live pointer_info query. Used once the virtual
 // address is actually backed (post hsa_amd_vmem_map), which is the only point where the
-// true owner of VMM-mapped / imported memory can be resolved.
+// true owner of VMM-mapped / imported memory can be resolved. When the query cannot name
+// an owner the agent cached at create() is left in place.
 void Memory::refreshOwningAgentFromPointerInfo() {
   if (deviceMemory_ == nullptr) {
     return;
@@ -1205,22 +1206,31 @@ void Memory::refreshOwningAgentFromPointerInfo() {
 
   hsa_amd_pointer_info_t info = {};
   info.size = sizeof(info);
-  hsa_status_t err = hsa_amd_pointer_info(reinterpret_cast<address>(deviceMemory_), &info, nullptr,
-                                          nullptr, nullptr);
+  // Reporting no owner isn't a failure case this is the expected for imported memory with unknown
+  // placement.
+  if (hsa_amd_pointer_info(reinterpret_cast<address>(deviceMemory_), &info, nullptr, nullptr,
+                           nullptr) != HSA_STATUS_SUCCESS) {
+    LogWarning("refreshOwningAgentFromPointerInfo: hsa_amd_pointer_info failed");
+    return;
+  }
+  if (info.agentOwner.handle == 0) {
+    return;
+  }
 
-  // info.agentOwner is the agent that actually owns the backing pages (a peer device for
-  // imported memory). Fall back to this device's backend if the query can't resolve it.
-  hsa_agent_t agent =
-      (err == HSA_STATUS_SUCCESS && info.agentOwner.handle != 0) ? info.agentOwner
-                                                                 : dev().getBackendDevice();
-  setOwningAgent(agent);
+  setOwningAgent(info.agentOwner);
 }
 
 // Helper function to compute and cache the owning agent
 void Buffer::computeAndSetOwningAgent() {
   hsa_agent_t agent;
 
-  // Sub-buffers must inherit agent from parent, not recompute it
+  // Sub-buffers must inherit agent from parent, not recompute it.
+  //
+  // This branch also swallows VMM sub-objects, whose parent is the reserved VA range: at
+  // create() time the VA is not yet backed, so there is nothing for the ipcShared/vmmImported
+  // branch below to query even if it were reached (setVmmImported runs later, in
+  // FinalizeMapMemObjBookkeeping). Those objects are resolved post-map instead, by
+  // Memory::refreshOwningAgentFromPointerInfo via Device::RefreshMappedMemoryOwner.
   if (owner() != nullptr && owner()->parent() != nullptr) {
     const Memory* parentMemory = static_cast<const Memory*>(
         owner()->parent()->getDeviceMemory(dev_));

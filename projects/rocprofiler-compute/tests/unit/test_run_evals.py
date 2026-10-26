@@ -5,7 +5,9 @@
 
 import argparse
 import json
+from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List, Union
 
 import pytest
@@ -21,6 +23,29 @@ USAGE_ERROR = (
 COMMAND_FAILURE = ["rocprof-compute command failed with a usage error"]
 HELP_OUTPUT = "usage: rocprof-compute [mode] [options]\noptions:\n  -h, --help"
 SKILL = "rocprof-compute-memory"
+
+
+def judge_reply(
+    judgment: SimpleNamespace, options: List[str], prompt: str, **_kwargs
+) -> str:
+    """Record the external judge request and return a controlled wire response."""
+    judgment.prompts.append(prompt)
+    judgment.options.append(options)
+    if isinstance(judgment.reply, str):
+        return judgment.reply
+    return next(judgment.reply)
+
+
+@pytest.fixture
+def usage_judge(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Keep the real judgment decoder while replacing the Claude subprocess."""
+    judgment = SimpleNamespace(
+        reply=json.dumps({"pass": False, "reason": "An executed CLI command failed."}),
+        prompts=[],
+        options=[],
+    )
+    monkeypatch.setattr("skills.run_evals._run_claude", partial(judge_reply, judgment))
+    return judgment
 
 
 def tool_result(
@@ -271,12 +296,14 @@ def test_grade_command_usage_errors(
     behavioral: bool,
     expected_failures: List[str],
     tmp_path: Path,
+    usage_judge: SimpleNamespace,
 ) -> None:
     failures = grade(
         {"skill_should_trigger": True}, SKILL, transcript, [SKILL], tmp_path, behavioral
     )
 
     assert failures == expected_failures
+    assert bool(usage_judge.prompts) == bool(expected_failures)
 
 
 @pytest.mark.parametrize(
@@ -294,7 +321,10 @@ def test_grade_command_usage_errors(
     ],
 )
 def test_grade_real_parser_usage_errors(
-    arguments: List[str], tmp_path: Path, capsys: pytest.CaptureFixture
+    arguments: List[str],
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    usage_judge: SimpleNamespace,
 ) -> None:
     parser = argparse.ArgumentParser(
         prog="tool", usage="rocprof-compute [mode] [options]"
@@ -319,7 +349,10 @@ def test_grade_real_parser_usage_errors(
 
 
 def test_grade_preliminary_parser_usage_error(
-    tmp_path: Path, capsys: pytest.CaptureFixture, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+    usage_judge: SimpleNamespace,
 ) -> None:
     monkeypatch.setattr(
         "sys.argv",
@@ -344,3 +377,188 @@ def test_grade_preliminary_parser_usage_error(
     )
 
     assert failures == COMMAND_FAILURE
+
+
+@pytest.mark.parametrize(
+    ("command", "output", "reply", "expected_failures"),
+    [
+        pytest.param(
+            f"rocprof-compute --version; printf '%s\\n' '{USAGE_ERROR}'",
+            "version 1.0\n" + USAGE_ERROR,
+            {"pass": True, "reason": "Only printf prints the diagnostic."},
+            [],
+            id="version-then-printed-diagnostic",
+        ),
+        pytest.param(
+            f"rocprof-compute --version; cat <<'EOF'\n{USAGE_ERROR}\nEOF\n",
+            "version 1.0\n" + USAGE_ERROR,
+            {"pass": True, "reason": "Only cat prints the literal heredoc."},
+            [],
+            id="version-then-heredoc-diagnostic",
+        ),
+        pytest.param(
+            "rocprof-compute analyze -p workload/ -b 3 30; "
+            f"printf '%s\\n' '{USAGE_ERROR}'",
+            "3. Memory Chart\n30. Guidance\n" + USAGE_ERROR,
+            {"pass": True, "reason": "Analysis succeeds; printf prints the example."},
+            [],
+            id="analysis-then-printed-diagnostic",
+        ),
+        pytest.param(
+            f"rocprof-compute analyze --membw-analysis; printf '%s\\n' '{USAGE_ERROR}'",
+            USAGE_ERROR + "\n" + USAGE_ERROR,
+            {"pass": False, "reason": "The first diagnostic is a real CLI failure."},
+            COMMAND_FAILURE,
+            id="real-error-and-identical-printed-example",
+        ),
+        pytest.param(
+            "rocprof-compute analyze --membw-analysis && "
+            f"printf '%s\\n' '{USAGE_ERROR}'",
+            USAGE_ERROR,
+            {"pass": False, "reason": "The failing CLI prevents printf from running."},
+            COMMAND_FAILURE,
+            id="real-error-and-skipped-printer",
+        ),
+        pytest.param(
+            "rocprof-compute --version; "
+            "rocprof-compute analyze --membw-analysis || true",
+            "version 1.0\n" + USAGE_ERROR,
+            {"pass": False, "reason": "The version output does not clear a failure."},
+            COMMAND_FAILURE,
+            id="version-then-masked-real-error",
+        ),
+        pytest.param(
+            "rocprof-compute analyze --membw-analysis || true; "
+            "rocprof-compute --version",
+            USAGE_ERROR + "\nversion 1.0",
+            {"pass": False, "reason": "Later success does not clear a failure."},
+            COMMAND_FAILURE,
+            id="masked-real-error-then-version",
+        ),
+        pytest.param(
+            "rocprof-compute analyze --membw-analysis",
+            USAGE_ERROR,
+            "unparseable response",
+            COMMAND_FAILURE,
+            id="unparseable-usage-judgment-fails-closed",
+        ),
+        pytest.param(
+            "rocprof-compute analyze --membw-analysis",
+            USAGE_ERROR,
+            '{"pass": "false", "reason": "Not a boolean verdict."}',
+            COMMAND_FAILURE,
+            id="invalid-usage-verdict-fails-closed",
+        ),
+        pytest.param(
+            "rocprof-compute analyze --membw-analysis",
+            USAGE_ERROR,
+            "[]",
+            COMMAND_FAILURE,
+            id="invalid-usage-judge-payload-fails-closed",
+        ),
+    ],
+)
+def test_grade_correlates_usage_diagnostics(
+    command: str,
+    output: str,
+    reply: Union[str, Dict[str, Union[bool, str]]],
+    expected_failures: List[str],
+    tmp_path: Path,
+    usage_judge: SimpleNamespace,
+) -> None:
+    usage_judge.reply = reply if isinstance(reply, str) else json.dumps(reply)
+    transcript = tool_result(output, command=command)
+    # A different tool result must not enter this candidate's judgment context.
+    transcript += "\n" + tool_result("unrelated file contents", tool_name="Read")
+
+    failures = grade(
+        {"skill_should_trigger": True},
+        SKILL,
+        transcript,
+        [SKILL],
+        tmp_path,
+        behavioral=True,
+    )
+
+    assert failures == expected_failures
+    assert len(usage_judge.prompts) == 1
+    assert usage_judge.options[0][-2:] == ["--tools", ""]
+    context = usage_judge.prompts[0].split("Transcript:\n", 1)[1]
+    assert json.loads(context) == {"command": command, "output": output}
+
+
+def test_grade_keeps_usage_failure_when_judge_context_would_be_truncated(
+    tmp_path: Path, usage_judge: SimpleNamespace
+) -> None:
+    command = (
+        f"rocprof-compute --version; printf '%s\\n' '{USAGE_ERROR}'; "
+        "python3 -c \"print('x' * 210000)\"; "
+        "rocprof-compute analyze --membw-analysis || true"
+    )
+    output = "version 1.0\n" + USAGE_ERROR + "\n" + "x" * 210000 + "\n" + USAGE_ERROR
+    usage_judge.reply = json.dumps({
+        "pass": True,
+        "reason": "Only the example is seen.",
+    })
+
+    failures = grade(
+        {"skill_should_trigger": True},
+        SKILL,
+        tool_result(output, command=command),
+        [SKILL],
+        tmp_path,
+        behavioral=True,
+    )
+
+    assert failures == COMMAND_FAILURE
+    assert not usage_judge.prompts
+
+
+@pytest.mark.parametrize(
+    ("second_command", "second_pass", "expected_failures"),
+    [
+        pytest.param(
+            f"rocprof-compute --version; cat <<'EOF'\n{USAGE_ERROR}\nEOF\n",
+            True,
+            [],
+            id="multiple-printed-examples",
+        ),
+        pytest.param(
+            "rocprof-compute analyze --membw-analysis || true",
+            False,
+            COMMAND_FAILURE,
+            id="printed-example-then-real-failure",
+        ),
+    ],
+)
+def test_grade_checks_later_usage_candidates(
+    second_command: str,
+    second_pass: bool,
+    expected_failures: List[str],
+    tmp_path: Path,
+    usage_judge: SimpleNamespace,
+) -> None:
+    first_command = f"rocprof-compute --version; printf '%s\\n' '{USAGE_ERROR}'"
+    transcript = tool_result("version 1.0\n" + USAGE_ERROR, command=first_command)
+    second_output = "version 1.0\n" + USAGE_ERROR if second_pass else USAGE_ERROR
+    transcript += "\n" + tool_result(second_output, command=second_command)
+    usage_judge.reply = iter([
+        json.dumps({"pass": True, "reason": "The first diagnostic is an example."}),
+        json.dumps({"pass": second_pass, "reason": "The next invocation is assessed."}),
+    ])
+
+    failures = grade(
+        {"skill_should_trigger": True},
+        SKILL,
+        transcript,
+        [SKILL],
+        tmp_path,
+        behavioral=True,
+    )
+
+    assert failures == expected_failures
+    contexts = [prompt.split("Transcript:\n", 1)[1] for prompt in usage_judge.prompts]
+    assert [json.loads(context)["command"] for context in contexts] == [
+        first_command,
+        second_command,
+    ]

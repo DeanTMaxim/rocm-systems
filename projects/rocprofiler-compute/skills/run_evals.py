@@ -30,7 +30,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Iterator, List, Optional, Tuple
 
 SKILLS_ROOT = Path(__file__).resolve().parent
 SAMPLES_ROOT = SKILLS_ROOT.parent / "sample"
@@ -63,6 +63,16 @@ JUDGE_SCHEMA = {
     },
     "required": ["pass", "reason"],
 }
+JUDGE_TRANSCRIPT_LIMIT = 200000
+
+COMMAND_USAGE_SUCCESS_CLAIM = (
+    "No rocprof-compute invocation actually executed by this Bash call failed "
+    "with a CLI usage error. Diagnostics printed or read as examples do not count. "
+    "An overall zero shell exit status, pipelines, || true, or later recovery "
+    "do not clear a real CLI usage failure. Pass only when the command and output "
+    "show that the diagnostic is example text rather than an actual CLI failure; "
+    "unresolved attribution fails this claim."
+)
 
 
 def discover_skills(only: Optional[str]) -> list[Path]:
@@ -249,10 +259,17 @@ def grade_judged(claim: str, transcript: str, should_hold: bool) -> tuple[bool, 
         f"Claim: {claim}\n"
         "Set pass to true if the claim holds in the transcript, false if not.\n"
         "Answer only with the JSON object.\n\n"
-        f"Transcript:\n{transcript[:200000]}"
+        f"Transcript:\n{transcript[:JUDGE_TRANSCRIPT_LIMIT]}"
     )
     output = _run_claude(
-        ["--output-format", "json", "--json-schema", json.dumps(JUDGE_SCHEMA)],
+        [
+            "--output-format",
+            "json",
+            "--json-schema",
+            json.dumps(JUDGE_SCHEMA),
+            "--tools",
+            "",
+        ],
         question,
     )
     try:
@@ -261,7 +278,9 @@ def grade_judged(claim: str, transcript: str, should_hold: bool) -> tuple[bool, 
     except (json.JSONDecodeError, KeyError, TypeError):
         return False, "judge returned unparseable output"
 
-    held = bool(verdict.get("pass"))
+    if not isinstance(verdict, dict) or not isinstance(verdict.get("pass"), bool):
+        return False, "judge returned unparseable output"
+    held = verdict["pass"]
     return held == should_hold, str(verdict.get("reason", ""))
 
 
@@ -284,7 +303,7 @@ def grade(
     if not behavioral:
         return failures
 
-    if _has_command_usage_error(transcript):
+    if _confirm_command_usage_error(transcript):
         failures.append("rocprof-compute command failed with a usage error")
 
     for needle in case.get("logs_contain", []):
@@ -392,8 +411,22 @@ def main() -> int:
     return 1 if failed else 0
 
 
-def _has_command_usage_error(transcript: str) -> bool:
-    """Detect a CLI usage error within one Bash command's output."""
+def _confirm_command_usage_error(transcript: str) -> bool:
+    """Confirm whether a diagnostic candidate is an executed CLI failure."""
+    for candidate in _command_usage_error_candidates(transcript):
+        # Clearing a failure requires the complete command and output evidence.
+        if len(candidate) > JUDGE_TRANSCRIPT_LIMIT:
+            return True
+        passed, _ = grade_judged(
+            COMMAND_USAGE_SUCCESS_CLAIM, candidate, should_hold=True
+        )
+        if not passed:
+            return True
+    return False
+
+
+def _command_usage_error_candidates(transcript: str) -> Iterator[str]:
+    """Pair suspicious CLI diagnostics with their own Bash command input."""
     commands = {}
     for event_line in transcript.splitlines():
         try:
@@ -434,8 +467,10 @@ def _has_command_usage_error(transcript: str) -> bool:
                 output,
                 re.MULTILINE,
             ) and _invokes_rocprof_compute(commands[block["tool_use_id"]]):
-                return True
-    return False
+                yield json.dumps({
+                    "command": commands[block["tool_use_id"]],
+                    "output": output,
+                })
 
 
 def _tool_result_text(content: Any) -> str:

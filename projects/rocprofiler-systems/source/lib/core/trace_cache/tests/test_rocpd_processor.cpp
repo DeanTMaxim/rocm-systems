@@ -1990,24 +1990,31 @@ TEST_F(rocpd_write_read_test_interface, handle_gpu_perf_counter_sample_empty_ent
 // handle(cpu_pmc_sample): process-level + per-core PMC inserts
 // ---------------------------------------------------------------------------
 
+// Regression test for per-core values dropped as
+//   "CPU PMC sample skipped: PMC info not registered for name=cpu_frequency"
 TEST_F(rocpd_write_read_test_interface, handle_cpu_pmc_sample_pathway)
 {
     // Prepare: seed metadata/agents/samples and run rocpd_processor_t (opens reader).
-    const auto cpu = managed_cpu_agent();
+    const auto        cpu        = managed_cpu_agent();
+    const std::string core0_freq = "cpu_frequency [0] Core [0]";
+    const std::string core1_freq = "cpu_frequency [0] Core [1]";
+    std::string       handle_output;
     run_processor_and_open_reader(
         { cpu },
-        [](const std::shared_ptr<metadata_registry>& metadata) {
+        [&](const std::shared_ptr<metadata_registry>& metadata) {
             metadata->add_pmc_info(make_agent_pmc_row({ .type = agent_type::cpu,
                                                         .name = "process_physical_memory",
                                                         .target_arch = "CPU" }));
-            metadata->add_pmc_info(make_agent_pmc_row({ .type        = agent_type::cpu,
-                                                        .name        = "cpu_frequency",
-                                                        .target_arch = "CPU" }));
             add_process_scoped_track(metadata, "process_physical_memory");
-            add_process_scoped_track(metadata, "cpu_frequency [0] Core [0]");
-            add_process_scoped_track(metadata, "cpu_frequency [0] Core [1]");
+            for(const auto& core_name : { core0_freq, core1_freq })
+            {
+                metadata->add_pmc_info(make_agent_pmc_row({ .type = agent_type::cpu,
+                                                            .name = core_name.c_str(),
+                                                            .target_arch = "CPU" }));
+                add_process_scoped_track(metadata, core_name);
+            }
         },
-        [](rocpd_processor_t& processor) {
+        [&](rocpd_processor_t& processor) {
             constexpr double        k_page_rss_mib   = 256.5;
             constexpr double        k_bytes_per_mib  = 1024.0 * 1024.0;
             constexpr float         k_core0_freq_mhz = 3200.0f;
@@ -2025,19 +2032,29 @@ TEST_F(rocpd_write_read_test_interface, handle_cpu_pmc_sample_pathway)
             auto freqs = rocprofsys::pmc::collectors::cpu::serialize_frequencies(cores);
             const cpu_pmc_sample sample{ enabled,          0, k_timestamp, proc,
                                          std::move(freqs), {} };
+            ::testing::internal::CaptureStdout();
+            ::testing::internal::CaptureStderr();
             processor.handle(sample);
+            handle_output = ::testing::internal::GetCapturedStdout() +
+                            ::testing::internal::GetCapturedStderr();
         });
 
+    EXPECT_EQ(handle_output.find("PMC info not registered"), std::string::npos)
+        << handle_output;
+
     const auto pmc_infos = m_reader->get_all_pmc_info();
-    ASSERT_EQ(pmc_infos.size(), 2U);
+    ASSERT_EQ(pmc_infos.size(), 3U);
     expect_named_pmc_arch(pmc_infos, { .name                = "process_physical_memory",
                                        .expected_arch       = "CPU",
                                        .expected_agent_type = "CPU",
                                        .expected_symbol = "process_physical_memory" });
-    expect_named_pmc_arch(pmc_infos, { .name                = "cpu_frequency",
-                                       .expected_arch       = "CPU",
-                                       .expected_agent_type = "CPU",
-                                       .expected_symbol     = "cpu_frequency" });
+    for(const auto& core_name : { core0_freq, core1_freq })
+    {
+        expect_named_pmc_arch(pmc_infos, { .name                = core_name.c_str(),
+                                           .expected_arch       = "CPU",
+                                           .expected_agent_type = "CPU",
+                                           .expected_symbol     = core_name.c_str() });
+    }
 
     expect_readback_agent_fields({ .agent_type   = "CPU",
                                    .name         = "CPU0",
@@ -2045,8 +2062,7 @@ TEST_F(rocpd_write_read_test_interface, handle_cpu_pmc_sample_pathway)
                                    .vendor_name  = "AMD",
                                    .product_name = "EPYC 7763" });
 
-    expect_reader_has_tracks({ "process_physical_memory", "cpu_frequency [0] Core [0]",
-                               "cpu_frequency [0] Core [1]" });
+    expect_reader_has_tracks({ "process_physical_memory", core0_freq, core1_freq });
 }
 
 // ---------------------------------------------------------------------------

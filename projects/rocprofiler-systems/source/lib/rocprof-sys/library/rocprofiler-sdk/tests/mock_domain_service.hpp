@@ -983,8 +983,8 @@ struct thread_info_data_t
     std::int32_t  parent_process_id = 0;
     std::int32_t  process_id        = 0;
     std::uint64_t thread_id         = 0;
-    std::uint32_t start             = 0;
-    std::uint32_t end               = 0;
+    std::uint64_t start             = 0;
+    std::uint64_t end               = 0;
     std::string   extdata;
 
     bool operator==(const thread_info_data_t&) const = default;
@@ -1588,7 +1588,9 @@ struct externals
             if(g_metadata_registry_mock)
             {
                 g_metadata_registry_mock->ensure_track(
-                    track_t{ std::string{ name }, thread_id, std::string{ extdata } });
+                    track_t{ .track_name = std::string{ name },
+                             .thread_id  = thread_id,
+                             .extdata    = std::string{ extdata } });
             }
         }
         void add_pmc_info(const pmc_info_t& info)

@@ -207,26 +207,20 @@ void
 metadata_initialize_thread_info(size_t tid)
 {
     const auto& _thread_info = thread_info::get(tid, SequentTID);
-    if(!_thread_info)
+    if(!_thread_info || !_thread_info->index_data)
     {
         throw std::runtime_error(fmt::format("No valid thread info for tid={}", tid));
-    }
-    if(!_thread_info)
-    {
-        return;
     }
 
     auto const thread_id =
         static_cast<std::uint64_t>(_thread_info->index_data->system_value);
     trace_cache::get_metadata_registry().ensure_thread(thread_id, [&] {
-        return trace_cache::info::thread{
-            .parent_process_id = getppid(),
-            .process_id        = getpid(),
-            .thread_id         = thread_id,
-            .start             = static_cast<std::uint32_t>(_thread_info->get_start()),
-            .end               = static_cast<std::uint32_t>(_thread_info->get_stop()),
-            .extdata           = "{}"
-        };
+        return trace_cache::info::thread{ .parent_process_id = getppid(),
+                                          .process_id        = getpid(),
+                                          .thread_id         = thread_id,
+                                          .start             = _thread_info->get_start(),
+                                          .end               = _thread_info->get_stop(),
+                                          .extdata           = "{}" };
     });
 }
 

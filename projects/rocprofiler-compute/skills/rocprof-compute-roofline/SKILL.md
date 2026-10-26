@@ -15,9 +15,13 @@ carries the same numbers in readable form.
 
 ## Prerequisites
 
-- Linux with `rocprof-compute` on `PATH`. ROCm 6.2 and newer ship it. A source build needs ROCm 5.7.1 or newer; see [source install](../../docs/install/source-install.rst). Use the ROCm install the user already has. There is no default container image to guess.
-- Roofline microbenchmarks run on the Instinct MI200, MI300, and MI350 series and on supported client APUs. MI100 (gfx908) skips them. MI50 and MI60 are not supported. Confirm the architecture in [compatible accelerators](../../docs/reference/compatible-accelerators.rst).
-- `HIP_VISIBLE_DEVICES` chooses the GPU the application runs on. A nonempty `HIP_VISIBLE_DEVICES` overrides `CUDA_VISIBLE_DEVICES`. If `HIP_VISIBLE_DEVICES` is empty, HIP uses `CUDA_VISIBLE_DEVICES`. An empty value of either variable does not hide GPUs. `-1`, or an empty `ROCR_VISIBLE_DEVICES`, hides every GPU. `--device` selects the GPU for the roofline microbenchmarks only. Do not set `HSA_OVERRIDE_GFX_VERSION` to force an unsupported architecture.
+Install, supported GPUs, and which GPU the application runs on are in
+[Install ROCm Compute Profiler](../../docs/install/core-install.rst),
+[source install](../../docs/install/source-install.rst),
+[compatible accelerators](../../docs/reference/compatible-accelerators.rst),
+and [Selecting a GPU](../../docs/how-to/profile/mode.rst).
+Roofline support by GPU is in
+[supported hardware](../../docs/what-is-rocprof-compute.rst).
 
 ## 1. Collect
 
@@ -31,16 +35,12 @@ Collecting it runs microbenchmarks in addition to profiling the application,
 which takes extra time. `--no-roof` skips them when the user only wants
 counters.
 
-MI100 (gfx908) does not support the roofline microbenchmarks. Every other
-supported architecture does. On MI100 the benchmark is skipped and the profile
-still succeeds, so a missing roofline there is not a mistake in how the profile
-was run. Never tell an MI100 user to re-profile without `--no-roof`; use
-Speed-of-Light and the `rocprof-compute-memory` skill instead. Confirm support
-for a new architecture against
-[compatible-accelerators.rst](../../docs/reference/compatible-accelerators.rst).
+When [supported hardware](../../docs/what-is-rocprof-compute.rst) shows no
+roofline support, do not ask the user to re-profile without `--no-roof`.
+Use Speed-of-Light and the `rocprof-compute-memory` skill instead.
 
-`--device` selects the GPU for the roofline microbenchmarks. It does not
-choose which GPU the application runs on; use `HIP_VISIBLE_DEVICES` for that.
+`--device` and `HIP_VISIBLE_DEVICES` are different selections. See
+[Selecting a GPU](../../docs/how-to/profile/mode.rst).
 
 See [standalone roofline](../../docs/how-to/profile/mode.rst) for `--roof-only`
 and `--bench-only`, which run the microbenchmarks without profiling an

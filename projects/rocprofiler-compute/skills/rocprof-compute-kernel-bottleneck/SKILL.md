@@ -11,9 +11,11 @@ what limits it. Hand off to a focused skill once the limit is clear.
 
 ## Prerequisites
 
-- Linux with `rocprof-compute` on `PATH`. ROCm 6.2 and newer ship it. A source build needs ROCm 5.7.1 or newer; see [source install](../../docs/install/source-install.rst). Use the ROCm install the user already has. There is no default container image to guess.
-- Supported accelerators are the Instinct MI100, MI200, MI300, and MI350 series, plus the client APUs in [compatible accelerators](../../docs/reference/compatible-accelerators.rst). MI50 and MI60 are not supported. Read `GPU Arch` from `rocprof-compute --specs` before promising a feature the table does not list.
-- `HIP_VISIBLE_DEVICES` chooses the GPU the application runs on. A nonempty `HIP_VISIBLE_DEVICES` overrides `CUDA_VISIBLE_DEVICES`. If `HIP_VISIBLE_DEVICES` is empty, HIP uses `CUDA_VISIBLE_DEVICES`. An empty value of either variable does not hide GPUs. `-1`, or an empty `ROCR_VISIBLE_DEVICES`, hides every GPU. Do not set `HSA_OVERRIDE_GFX_VERSION` to force an unsupported architecture. The profiler then collects the wrong counters.
+Install, supported GPUs, and which GPU the application runs on are in
+[Install ROCm Compute Profiler](../../docs/install/core-install.rst),
+[source install](../../docs/install/source-install.rst),
+[compatible accelerators](../../docs/reference/compatible-accelerators.rst),
+and [Selecting a GPU](../../docs/how-to/profile/mode.rst).
 
 Run `rocprof-compute profile --help` and `rocprof-compute analyze --help`
 before choosing flags. Options change between releases; do not guess one.
@@ -80,9 +82,10 @@ MPI. Change it with `--output-directory`, which replaces `--name` for building
 the path. Re-profiling into a non-empty directory needs `--overwrite`; prefer a
 fresh directory.
 
-To restrict which GPU the application uses, set `HIP_VISIBLE_DEVICES`. Under
-Slurm, derive it from `ROCR_VISIBLE_DEVICES`, not from `SLURM_STEP_GPUS`; the
-indices differ.
+Which GPU the application runs on is in
+[Selecting a GPU](../../docs/how-to/profile/mode.rst). Under Slurm, derive
+`HIP_VISIBLE_DEVICES` from `ROCR_VISIBLE_DEVICES`, not from `SLURM_STEP_GPUS`;
+the indices differ.
 
 See [profile mode](../../docs/how-to/profile/mode.rst) for output layout,
 filtering, and the full option list. To profile a process that is already

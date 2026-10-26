@@ -15,10 +15,16 @@ option names can change between releases, so run
 
 ## Prerequisites
 
-- Linux with `rocprof-compute` and `rocprofv3-avail` on `PATH`. ROCm 6.2 and newer ship rocprof-compute. A source build needs ROCm 5.7.1 or newer; see [source install](../../docs/install/source-install.rst). Use the ROCm install the user already has. There is no default container image to guess.
-- Stochastic sampling needs an Instinct MI300 or newer GPU. `host_trap` works on more of the accelerators in [compatible accelerators](../../docs/reference/compatible-accelerators.rst). MI50 and MI60 are not supported. Query the device before choosing a method.
-- `HIP_VISIBLE_DEVICES` chooses the GPU the application runs on. A nonempty `HIP_VISIBLE_DEVICES` overrides `CUDA_VISIBLE_DEVICES`. If `HIP_VISIBLE_DEVICES` is empty, HIP uses `CUDA_VISIBLE_DEVICES`. An empty value of either variable does not hide GPUs. `-1`, or an empty `ROCR_VISIBLE_DEVICES`, hides every GPU. Do not set `HSA_OVERRIDE_GFX_VERSION` to force an unsupported architecture.
-- This skill drives `rocprof-compute --pc-sampling`. A request to invoke `rocprofv3 --pc-sampling-beta-enabled` directly belongs to the rocprofiler-sdk PC sampling skill, not this one.
+Install, supported GPUs, and which GPU the application runs on are in
+[Install ROCm Compute Profiler](../../docs/install/core-install.rst),
+[source install](../../docs/install/source-install.rst),
+[compatible accelerators](../../docs/reference/compatible-accelerators.rst),
+and [Selecting a GPU](../../docs/how-to/profile/mode.rst).
+
+This skill drives `rocprof-compute --pc-sampling`. A request to invoke
+`rocprofv3 --pc-sampling-beta-enabled` directly belongs to the rocprofiler-sdk
+PC sampling skill, not this one. Method support is in
+[PC sampling](../../docs/how-to/pc_sampling.rst).
 
 Never use the GUI or TUI.
 
@@ -32,9 +38,10 @@ This reports the sampling methods the installed device accepts and the valid
 interval range. Two methods exist:
 
 - `stochastic` samples in hardware and is the only method that records a stall
-  reason. It requires MI300 or newer.
-- `host_trap` works more widely but records no stall reason, and its samples
-  can land a little past the instruction responsible.
+  reason. Which GPUs accept it is in
+  [PC sampling](../../docs/how-to/pc_sampling.rst).
+- `host_trap` records no stall reason, and its samples can land a little past
+  the instruction responsible.
 
 `--pc-sampling-method` defaults to `stochastic`. Fall back to `host_trap` only
 when the device rejects stochastic.

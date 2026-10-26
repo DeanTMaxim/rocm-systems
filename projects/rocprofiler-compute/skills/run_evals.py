@@ -21,6 +21,8 @@ is missing so a caller can treat that as skipped rather than broken.
 import argparse
 import json
 import os
+import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -282,6 +284,9 @@ def grade(
     if not behavioral:
         return failures
 
+    if _has_command_usage_error(transcript):
+        failures.append("rocprof-compute command failed with a usage error")
+
     for needle in case.get("logs_contain", []):
         if needle not in transcript:
             failures.append(f"logs missing {needle!r}")
@@ -385,6 +390,150 @@ def main() -> int:
     total = len(queued)
     print(f"\n{total - failed}/{total} passed in {elapsed:.0f}s ({args.mode} mode)")
     return 1 if failed else 0
+
+
+def _has_command_usage_error(transcript: str) -> bool:
+    """Detect a CLI usage error within one Bash command's output."""
+    commands = {}
+    for event_line in transcript.splitlines():
+        try:
+            event = json.loads(event_line)
+        except json.JSONDecodeError:
+            continue
+        message = event.get("message") if isinstance(event, dict) else None
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            command_id = block.get("id")
+            if (
+                block.get("type") == "tool_use"
+                and block.get("name") == "Bash"
+                and isinstance(command_id, str)
+            ):
+                payload = block.get("input")
+                command = payload.get("command") if isinstance(payload, dict) else None
+                commands[command_id] = command if isinstance(command, str) else ""
+                continue
+            if (
+                block.get("type") != "tool_result"
+                or block.get("tool_use_id") not in commands
+            ):
+                continue
+            output = _tool_result_text(block.get("content"))
+            if re.search(
+                r"^usage:\s*`?rocprof-compute\b.*?"
+                r"^(?:tool|rocprof-compute): error:",
+                output,
+                re.DOTALL | re.MULTILINE,
+            ) and _invokes_rocprof_compute(commands[block["tool_use_id"]]):
+                return True
+    return False
+
+
+def _tool_result_text(content: Any) -> str:
+    """Normalize string and text-block tool results for diagnostic matching."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "\n".join(
+        part["text"]
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") == "text"
+        and isinstance(part.get("text"), str)
+    )
+
+
+def _invokes_rocprof_compute(command: str) -> bool:
+    """Recognize CLI commands following shell keywords and common launchers."""
+    # Keep complete quoted words intact, including quotes within assignments.
+    # Comments exclude their newline so the next command remains visible.
+    words = re.findall(
+        r"""#[^\n]*|(?:[^\s;&|()\\'"]|\\.|'[^']*'|"(?:\\.|[^"\\])*")+"""
+        r"|[;&|()\n]+",
+        command.replace("\\\n", ""),
+    )
+    prefixes = {
+        "env",
+        "command",
+        "exec",
+        "bash",
+        "sh",
+        "time",
+        "!",
+        "{",
+        "if",
+        "then",
+        "elif",
+        "else",
+        "while",
+        "until",
+        "do",
+    }
+    operand_options = {
+        "env": {"-u", "--unset", "-C", "--chdir"},
+        "python": {"-W", "-X"},
+        "exec": {"-a"},
+        "timeout": {"-s", "--signal", "-k", "--kill-after"},
+    }
+    expect_executable = True
+    launcher = ""
+    skip_operand = False
+    timeout_duration = False
+    try:
+        for word in words:
+            if word.startswith("#"):
+                continue
+            if all(character in ";&|()\n" for character in word):
+                expect_executable = True
+                launcher = ""
+                skip_operand = timeout_duration = False
+                continue
+            if not expect_executable:
+                continue
+            token = shlex.split(word)[0]
+            if skip_operand:
+                skip_operand = False
+                continue
+            if launcher == "shell-command" and _invokes_rocprof_compute(token):
+                return True
+            if launcher == "shell-command":
+                expect_executable = False
+                continue
+            if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token):
+                continue
+            if launcher == "command" and re.fullmatch(r"-[pvV]*[vV][pvV]*", token):
+                expect_executable = False
+                continue
+            if token.startswith("-"):
+                skip_operand = token in operand_options.get(launcher, ())
+                shell_command = (
+                    launcher in {"bash", "sh"}
+                    and not token.startswith("--")
+                    and "c" in token[1:]
+                )
+                launcher = "shell-command" if shell_command else launcher
+                continue
+            if timeout_duration:
+                timeout_duration = False
+                continue
+            executable = Path(token).name
+            if executable == "rocprof-compute":
+                return True
+            if executable == "timeout":
+                launcher = executable
+                timeout_duration = True
+                continue
+            python_launcher = bool(re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable))
+            launcher = "python" if python_launcher else executable
+            expect_executable = executable in prefixes or python_launcher
+    except ValueError:
+        return False
+    return False
 
 
 if __name__ == "__main__":

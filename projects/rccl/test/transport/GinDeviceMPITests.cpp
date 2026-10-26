@@ -8418,7 +8418,7 @@ void GinMPIDeviceTests::runDeviceTimeout(DeviceTimeoutCase timeoutCase) {
     timeoutWaitSignalAfterKernel<<<kGinKernelBlocks, n, 0, stream>>>(peer, budgets.longCycles, dResults, devComm);
     break;
   case DeviceTimeoutCase::WaitSignalVA:
-    // Unmet with a short and a zero budget. Only proxy sends VA signals, so only it checks the met cases.
+    // Unmet with a short and a zero budget. The met cases run only on backends that can send VA signals.
     expected = {ncclTimeout, ncclTimeout};
     timeoutWaitSignalVaBeforeKernel<<<kGinKernelBlocks, n, 0, stream>>>(sigWin, budgets.shortCycles, dResults, devComm);
     if (vaSignalTestSkipReason().empty()) {

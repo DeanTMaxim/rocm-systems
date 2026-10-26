@@ -1,2 +1,4 @@
+# skillscope uses os and labels to select the behavioral runner in the AMD skills repo (https://github.com/amd/skills).
+# mi300x is that runner, not the skill's supported GPUs. Supported GPUs stay in the rocprof-compute docs.
 os: [Linux]
 labels: [mi300x, gpu, rocm]

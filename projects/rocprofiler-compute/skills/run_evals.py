@@ -30,7 +30,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional, Tuple
 
 SKILLS_ROOT = Path(__file__).resolve().parent
 SAMPLES_ROOT = SKILLS_ROOT.parent / "sample"
@@ -423,11 +423,16 @@ def _has_command_usage_error(transcript: str) -> bool:
             ):
                 continue
             output = _tool_result_text(block.get("content"))
+            # Subparser usage includes examples, but help's option sections
+            # must not bridge a usage line to an unrelated printed error.
             if re.search(
-                r"^usage:\s*`?rocprof-compute\b.*?"
+                r"^usage:\s*`?rocprof-compute\b[^\n]*\n"
+                r"(?:[ \t][^\n]*\n|\n)*"
+                r"(?:^-+\nExamples:\n(?:[ \t][^\n]*\n)*"
+                r"^-+\n(?:[ \t]*\n)*)?"
                 r"^(?:tool|rocprof-compute): error:",
                 output,
-                re.DOTALL | re.MULTILINE,
+                re.MULTILINE,
             ) and _invokes_rocprof_compute(commands[block["tool_use_id"]]):
                 return True
     return False
@@ -450,12 +455,18 @@ def _tool_result_text(content: Any) -> str:
 
 def _invokes_rocprof_compute(command: str) -> bool:
     """Recognize CLI commands following shell keywords and common launchers."""
+    command, expanding_bodies = _without_heredoc_bodies(command)
+    command = command.replace("\\\n", "")
+    if _invokes_command_substitution(command) or any(
+        _invokes_command_substitution(body, heredoc=True) for body in expanding_bodies
+    ):
+        return True
     # Keep complete quoted words intact, including quotes within assignments.
     # Comments exclude their newline so the next command remains visible.
     words = re.findall(
         r"""#[^\n]*|(?:[^\s;&|()\\'"]|\\.|'[^']*'|"(?:\\.|[^"\\])*")+"""
         r"|[;&|()\n]+",
-        command.replace("\\\n", ""),
+        command,
     )
     prefixes = {
         "env",
@@ -533,6 +544,111 @@ def _invokes_rocprof_compute(command: str) -> bool:
             expect_executable = executable in prefixes or python_launcher
     except ValueError:
         return False
+    return False
+
+
+def _without_heredoc_bodies(command: str) -> Tuple[str, List[str]]:
+    """Separate shell commands from literal heredoc text and expanding bodies."""
+    tokens = re.compile(
+        r'''\\[\s\S]|'[^']*'|"(?:\\[\s\S]|[^"\\])*"'''
+        r"|(?<![^\s;&|()])\#[^\n]*"
+        r"|\(\([\s\S]*?\)\)"
+        r"""|(?<!<)<<(?!<)(?P<tabs>-?)[ \t]*(?P<delimiter>"""
+        r"""(?:[^\s;&|()<>\\'"]|\\.|'[^']*'|"(?:\\.|[^"\\])*")+)"""
+        r"|(?P<newline>\n)"
+    )
+    commands = []
+    expanding_bodies = []
+    pending: List[Tuple[str, bool, bool]] = []
+    cursor = kept_start = 0
+    while cursor < len(command):
+        token = tokens.search(command, cursor)
+        if token is None:
+            break
+        cursor = token.end()
+        delimiter = token.group("delimiter")
+        if delimiter is not None:
+            pending.append((
+                shlex.split(delimiter)[0],
+                bool(token.group("tabs")),
+                not any(character in delimiter for character in "'\"\\"),
+            ))
+        if token.group("newline") is None or not pending:
+            continue
+        commands.append(command[kept_start:cursor])
+        for delimiter, strip_tabs, expands in pending:
+            closing = re.compile(
+                r"^"
+                + (r"\t*" if strip_tabs else "")
+                + re.escape(delimiter)
+                + r"(?:\n|$)",
+                re.MULTILINE,
+            ).search(command, cursor)
+            body_end = closing.start() if closing else len(command)
+            if expands:
+                expanding_bodies.append(command[cursor:body_end])
+            cursor = closing.end() if closing else len(command)
+        kept_start = cursor
+        pending.clear()
+    commands.append(command[kept_start:])
+    return "".join(commands), expanding_bodies
+
+
+def _invokes_command_substitution(command: str, heredoc: bool = False) -> bool:
+    """Inspect executable $(...) expansions while preserving shell quoting."""
+    # Quotes and comments are literal at the top level of an unquoted heredoc.
+    quote = '"' if heredoc else ""
+    body_start = parenthesis_depth = index = 0
+    substitutions: List[Tuple[str, int, int]] = []
+
+    while index < len(command):
+        character = command[index]
+        if quote == "'":
+            if character == "'":
+                quote = ""
+            index += 1
+            continue
+        if character == "\\":
+            index += 2
+            continue
+        if (
+            character == "#"
+            and not quote
+            and (
+                index == 0
+                or command[index - 1].isspace()
+                or command[index - 1] in ";|&("
+            )
+        ):
+            newline = command.find("\n", index)
+            index = len(command) if newline == -1 else newline + 1
+            continue
+        if character == "'" and not quote:
+            quote = "'"
+        elif character == '"' and (substitutions or not heredoc):
+            quote = "" if quote else '"'
+        elif command.startswith("$(", index) and not command.startswith("$((", index):
+            substitutions.append((quote, body_start, parenthesis_depth))
+            quote = ""
+            body_start = index + 2
+            parenthesis_depth = 1
+            index += 2
+            continue
+        elif substitutions and not quote and character == "(":
+            parenthesis_depth += 1
+        elif substitutions and not quote and character == ")":
+            parenthesis_depth -= 1
+            if parenthesis_depth:
+                index += 1
+                continue
+            # Inspect the outer body first so its heredocs are removed before
+            # any nested expansions are treated as executable commands.
+            if len(substitutions) == 1 and _invokes_rocprof_compute(
+                command[body_start:index]
+            ):
+                return True
+            quote, body_start, parenthesis_depth = substitutions.pop()
+        index += 1
     return False
 
 

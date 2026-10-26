@@ -81,6 +81,20 @@ def tool_result(
         ),
         pytest.param(
             tool_result(
+                "usage: rocprof-compute [mode] [options]\n"
+                + "        [--example value]\n" * 10
+                + "options:\n  -h, --help\ntool: error: unrelated failure",
+                command=(
+                    "rocprof-compute --help; "
+                    "printf '%s\\n' 'tool: error: unrelated failure'"
+                ),
+            ),
+            True,
+            [],
+            id="help-then-printed-error-in-one-result",
+        ),
+        pytest.param(
+            tool_result(
                 USAGE_ERROR,
                 command=(
                     "source /tmp/setup.sh  # ROCm environment\n"
@@ -116,6 +130,37 @@ def tool_result(
         pytest.param(
             tool_result(
                 USAGE_ERROR,
+                command='result="$(rocprof-compute analyze --membw-analysis)"',
+            ),
+            True,
+            COMMAND_FAILURE,
+            id="quoted-command-substitution",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
+                command='echo "$(echo "$(rocprof-compute analyze --membw-analysis)")"',
+            ),
+            True,
+            COMMAND_FAILURE,
+            id="nested-command-substitution",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
+                command=(
+                    "result=\"$(cat <<'EOF'\n"
+                    "$(rocprof-compute analyze --membw-analysis)\n"
+                    f'{USAGE_ERROR}\nEOF\n)"; printf \'%s\\n\' "$result"'
+                ),
+            ),
+            True,
+            [],
+            id="substitution-prints-quoted-heredoc",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
                 command=(
                     "# rocprof-compute analyze --bad\n"
                     f"printf '%s\\n' x'; rocprof-compute' '{USAGE_ERROR}'"
@@ -124,6 +169,76 @@ def tool_result(
             True,
             [],
             id="bash-prints-error-example",
+        ),
+        pytest.param(
+            tool_result(
+                "rocprof-compute analyze --membw-analysis\n" + USAGE_ERROR,
+                command=(
+                    "cat <<'EOF'\nrocprof-compute analyze --membw-analysis\n"
+                    f"{USAGE_ERROR}\nEOF\n"
+                ),
+            ),
+            True,
+            [],
+            id="bash-prints-quoted-heredoc",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
+                command=(
+                    "cat <<EOF\nrocprof-compute analyze --membw-analysis\n"
+                    f"{USAGE_ERROR}\nEOF\n"
+                ),
+            ),
+            True,
+            [],
+            id="bash-prints-unquoted-heredoc",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
+                command=(
+                    "cat <<EOF\n# '$(rocprof-compute analyze --membw-analysis)'\nEOF\n"
+                ),
+            ),
+            True,
+            COMMAND_FAILURE,
+            id="unquoted-heredoc-executes-substitution",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
+                command=(
+                    "cat <<-'FIRST' <<'SECOND'\n\tprinted ' example \\\n\tFIRST\n"
+                    f"{USAGE_ERROR}\nSECOND\n"
+                    "rocprof-compute analyze --membw-analysis"
+                ),
+            ),
+            True,
+            COMMAND_FAILURE,
+            id="command-after-multiple-heredocs",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
+                command=(
+                    "printf '%s\\n' 'example:\ncat <<EOF'; "
+                    "rocprof-compute analyze --membw-analysis\n"
+                    "# cat <<EOF\n"
+                ),
+            ),
+            True,
+            COMMAND_FAILURE,
+            id="quoted-and-commented-heredoc-markers",
+        ),
+        pytest.param(
+            tool_result(
+                USAGE_ERROR,
+                command=("count=$((1 << 2))\nrocprof-compute analyze --membw-analysis"),
+            ),
+            True,
+            COMMAND_FAILURE,
+            id="arithmetic-shift-before-command",
         ),
         pytest.param(
             tool_result(
@@ -139,7 +254,11 @@ def tool_result(
         pytest.param(
             tool_result(
                 USAGE_ERROR,
-                command=(f'DIAGNOSTIC="{USAGE_ERROR}"; printf "%s\\n" "$DIAGNOSTIC"'),
+                command=(
+                    "EXAMPLE='$(rocprof-compute analyze --membw-analysis)'; "
+                    'ESCAPED="\\$(rocprof-compute analyze --membw-analysis)"; '
+                    f'DIAGNOSTIC="{USAGE_ERROR}"; printf "%s\\n" "$DIAGNOSTIC"'
+                ),
             ),
             True,
             [],
